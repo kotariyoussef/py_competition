@@ -1,4 +1,6 @@
 import argparse
+from console.main import main as console_main
+from web.main import run as web_main
 
 
 def main():
@@ -21,8 +23,10 @@ def main():
 
     if args.mode == "console":
         print("Running the app in console mode.")
+        console_main()
     elif args.mode == "web":
         print(f"Running the app in web mode port {args.port}.")
+        web_main(args.port)
 
 
 if __name__ == "__main__":

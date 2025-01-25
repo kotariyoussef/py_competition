@@ -1,146 +1,163 @@
 import sqlite3
+from datetime import datetime
 
 
 class DBManager:
+    """Database Manager for Flashcards App."""
+    
     def __init__(self, db_name="flashcards.db"):
         self.db_name = db_name
         self.conn = sqlite3.connect(self.db_name)
-        self.cursor = self.conn.cursor()
         self.create_tables()
 
     def create_tables(self):
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS flashcards (
+        """Create tables for the flashcards app."""
+        cursor = self.conn.cursor()
+
+        # Decks Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS Decks (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                description TEXT,
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+
+        # Flashcards Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS Flashcards (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                deck_id INTEGER,
                 question TEXT NOT NULL,
                 answer TEXT NOT NULL,
                 hint TEXT,
-                image_url TEXT,
-                video_url TEXT,
-                audio_url TEXT,
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP,
-                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
-            );
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (deck_id) REFERENCES Decks (id)
+            )
         """)
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS tags (
+
+        # Progress Table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS Progress (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE
-            );
+                card_id INTEGER,
+                correct_count INTEGER DEFAULT 0,
+                incorrect_count INTEGER DEFAULT 0,
+                last_reviewed TEXT DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (card_id) REFERENCES Flashcards (id)
+            )
         """)
-        self.cursor.execute("""
-            CREATE TABLE IF NOT EXISTS card_tags (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                card_id INTEGER NOT NULL,
-                tag_id INTEGER NOT NULL,
-                FOREIGN KEY (card_id) REFERENCES cards (id) ON DELETE CASCADE,
-                FOREIGN KEY (tag_id) REFERENCES tags (id) ON DELETE CASCADE
-            );
-        """)
+
         self.conn.commit()
 
-    def add_card(self, question, answer, hint=None, image_url=None, audio_url=None, video_url=None):
-        self.cursor.execute("""
-        INSERT INTO flashcards (question, answer, hint, image_url, audio_url, video_url)
-        VALUES (?, ?, ?, ?, ?, ?);
-        """, (question, answer, hint, image_url, audio_url, video_url))
+    def add_deck(self, name, description):
+        """Add a new deck."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT INTO Decks (name, description, created_at, updated_at)
+            VALUES (?, ?, ?, ?)
+        """, (name, description, datetime.now(), datetime.now()))
         self.conn.commit()
 
-    def get_cards(self):
-        self.cursor.execute("SELECT * FROM flashcards;")
-        return self.cursor.fetchall()
-
-    def delete_card(self, card_id):
-        self.cursor.execute("DELETE FROM flashcards WHERE id = ?", (card_id,))
+    def add_flashcard(self, deck_id, question, answer, hint=None):
+        """Add a new flashcard to a specific deck."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            INSERT INTO Flashcards (deck_id, question, answer, hint, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (deck_id, question, answer, hint, datetime.now(), datetime.now()))
         self.conn.commit()
 
-    def add_tag(self, name):
-        try:
-            self.cursor.execute("INSERT INTO tags (name) VALUES (?)", (name,))
-            self.conn.commit()
-        except sqlite3.IntegrityError:
-            print(f"Tag {name} already exists.")
+    def get_decks(self):
+        """Retrieve all decks."""
+        cursor = self.conn.cursor()
+        cursor.execute("SELECT id, name, description FROM Decks")
+        return cursor.fetchall()
 
-    def get_tags(self):
-        self.cursor.execute("SELECT * FROM tags;")
-        return self.cursor.fetchall()
+    def get_flashcards(self, deck_id):
+        """Retrieve flashcards for a specific deck."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT id, question, answer, hint FROM Flashcards WHERE deck_id = ?
+        """, (deck_id,))
+        return cursor.fetchall()
 
-    def delete_tag(self, tag_id):
-        self.cursor.execute("DELETE FROM tags WHERE id = ?", (tag_id,))
-        self.conn.commit()
+    def add_progress(self, card_id, correct):
+        """Update progress for a specific flashcard."""
+        cursor = self.conn.cursor()
 
-    def assign_tag_to_card(self, tag_id, card_id):
-        self.cursor.execute("""
-        INSERT INTO card_tags (tag_id, card_id) VALUES (?, ?);
-        """, (tag_id, card_id))
-        self.conn.commit()
-
-    def get_tags_for_card(self, card_id):
-        self.cursor.execute("""
-            SELECT t.id, t.name FROM tags t
-            JOIN card_tags ct ON t.id = ct.tag_id
-            WHERE ct.card_id = ?;
+        # Check if progress exists
+        cursor.execute("""
+            SELECT id, correct_count, incorrect_count FROM Progress WHERE card_id = ?
         """, (card_id,))
-        return self.cursor.fetchall()
+        progress = cursor.fetchone()
 
-    def get_cards_for_tag(self, tag_id):
-        self.cursor.execute("""
-            SELECT c.id, c.question, c.answer, c.hint, c.image_url, c.audio_url, c.video_url FROM flashcards c
-            JOIN card_tags ct ON c.id = ct.tag_id
-            WHERE ct.tag_id = ?;
-        """, (tag_id,))
-        return self.cursor.fetchall()
+        if progress:
+            # Update existing progress
+            progress_id, correct_count, incorrect_count = progress
+            if correct:
+                correct_count += 1
+            else:
+                incorrect_count += 1
 
-    def unassign_tag_from_card(self, tag_id, card_id):
-        self.cursor.execute("""
-        DELETE FROM card_tags WHERE card_id = ? AND tag_id = ?;
-        """, (card_id, tag_id))
+            cursor.execute("""
+                UPDATE Progress
+                SET correct_count = ?, incorrect_count = ?, last_reviewed = ?
+                WHERE id = ?
+            """, (correct_count, incorrect_count, datetime.now(), progress_id))
+        else:
+            # Insert new progress record
+            cursor.execute("""
+                INSERT INTO Progress (card_id, correct_count, incorrect_count, last_reviewed)
+                VALUES (?, ?, ?, ?)
+            """, (card_id, 1 if correct else 0, 0 if correct else 1, datetime.now()))
+
+        self.conn.commit()
+
+    def get_progress(self, card_id):
+        """Retrieve progress for a specific flashcard."""
+        cursor = self.conn.cursor()
+        cursor.execute("""
+            SELECT correct_count, incorrect_count FROM Progress WHERE card_id = ?
+        """, (card_id,))
+        return cursor.fetchone()
 
     def close(self):
+        """Close the database connection."""
         self.conn.close()
 
 
 # Example Usage
 if __name__ == "__main__":
-    db_manager = DBManager()
+    db = DBManager()
 
-    # Add cards
-    db_manager.add_card(
-        question="What is the capital of France?",
-        answer="Paris",
-        hint="City of Light"
-    )
-    db_manager.add_card(
-        question="What is 2 + 2?",
-        answer="4",
-        hint="Basic math"
-    )
+    # Create a new deck
+    db.add_deck("Python Basics", "A deck for learning Python fundamentals")
 
-    # Add tags
-    db_manager.add_tag("Geography")
-    db_manager.add_tag("Math")
+    # Add flashcards to the deck
+    db.add_flashcard(1, "What is Python?", "A programming language", "Think of a snake 🐍")
+    db.add_flashcard(1, "What does 'len()' do?", "Returns the length of an object", "Used for strings, lists, etc.")
 
-    # Assign tags to cards
-    db_manager.assign_tag_to_card(card_id=1, tag_id=1)  # Assign "Geography" to card 1
-    db_manager.assign_tag_to_card(card_id=2, tag_id=2)  # Assign "Math" to card 2
+    # Display all decks
+    print("Available Decks:")
+    for deck in db.get_decks():
+        print(f"{deck[0]}. {deck[1]} - {deck[2]}")
 
-    # Get all cards
-    print("All Cards:", db_manager.get_cards())
+    # Display flashcards for the first deck
+    print("\nFlashcards in 'Python Basics':")
+    for card in db.get_flashcards(1):
+        print(f"Q: {card[1]} | A: {card[2]} | Hint: {card[3]}")
 
-    # Get all tags
-    print("All Tags:", db_manager.get_tags())
+    # Update progress for a flashcard
+    db.add_progress(card_id=1, correct=True)
+    db.add_progress(card_id=1, correct=False)
 
-    # Get tags for a specific card
-    print("Tags for Card 1:", db_manager.get_tags_for_card(card_id=1))
+    # Display progress for a flashcard
+    progress = db.get_progress(1)
+    print("\nProgress for Flashcard 1:")
+    print(f"Correct: {progress[0]}, Incorrect: {progress[1]}")
 
-    # Get cards for a specific tag
-    print("Cards with 'Math' Tag:", db_manager.get_cards_for_tag(tag_id=2))
-
-    # Unassign a tag from a card
-    db_manager.unassign_tag_from_card(card_id=1, tag_id=1)
-
-    # Delete a card
-    db_manager.delete_card(card_id=2)
-
-    # Clean up
-    db_manager.close()
+    db.close()
